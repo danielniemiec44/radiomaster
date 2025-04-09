@@ -39,16 +39,9 @@ function YouTubeRecorder({ onRecordComplete }) {
     });
   }, []);
 
-  async function setupAudioWorklet(audioContext, stream) {
-    await audioContext.audioWorklet.addModule(`worklet-processor.js`);
-    const node = new AudioWorkletNode(audioContext, `my-worklet-processor`);
-    const source = audioContext.createMediaStreamSource(stream);
-    source.connect(node);
-    node.connect(audioContext.destination);
-    return node;
-  }
-
   const startRecording = async () => {
+    initRadioMaster().catch(err => console.error('Error initializing AudioWorklet:', err));
+
     recordedChunksRef.current = [];
     setAudioUrl(null);
 
@@ -71,35 +64,15 @@ function YouTubeRecorder({ onRecordComplete }) {
       await new Promise(resolve => setTimeout(resolve, 1000));
 
       // Przechwycenie ekranu/okna z dźwiękiem
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: true
-      });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const sourceNode = audioContext.createMediaStreamSource(stream);
 
-      // Wyciągamy tylko ścieżkę audio ze strumienia
-      const audioTracks = stream.getAudioTracks();
-      if (audioTracks.length === 0) {
-        alert('Nie wykryto ścieżki audio. Upewnij się, że współdzielenie systemu audio jest włączone.');
-        stream.getTracks().forEach(track => track.stop());
-        return;
-      }
+      // Connect the source to your worklet node.
+      sourceNode.connect(radioMasterNode);
 
-      mediaStreamRef.current = stream;
-
-      const AudioContext = window.AudioContext || window.webkitAudioContext;
-      const audioContext = new AudioContext();
-      audioContextRef.current = audioContext;
-
-      const source = audioContext.createMediaStreamSource(stream);
-
-      // Używamy ScriptProcessorNode
-      const processor = setupAudioWorklet(audioContext, stream);
-      processorRef.current = processor;
-
-
-
-      source.connect(processor);
-      processor.connect(audioContext.destination);
+      // Optionally, if you need to hear the audio immediately, connect the node to the destination.
+      // (If you are only processing and not playing back, you can omit this.)
+      radioMasterNode.connect(audioContext.destination);
 
       // 4. Wymuś natychmiastowe odpalenie playera przez postMessage
       window.playerWindow.postMessage('play-now', '*');
@@ -112,6 +85,25 @@ function YouTubeRecorder({ onRecordComplete }) {
       alert('Wystąpił błąd podczas rozpoczynania nagrywania. ' + error);
     }
   };
+
+
+  async function initRadioMaster() {
+    // Create an AudioContext.
+    const audioContext = new AudioContext();
+
+    // Load the AudioWorklet module; ensure the file path is correct.
+    await audioContext.audioWorklet.addModule('radio-master-processor.js');
+
+    // Create an instance of the AudioWorkletNode with your processor.
+    const radioMasterNode = new AudioWorkletNode(audioContext, 'radio-master-processor');
+
+    // Optional: Set up a handler to receive messages from your processor.
+    radioMasterNode.port.onmessage = (event) => {
+      // Handle the received audio data or any custom messages from the worklet.
+      console.log('Received processed data:', event.data);
+      // Your logic here: you might forward this data for recording or further manipulation.
+    };
+  }
 
   const stopRecording = async () => {
     setRecording(false);
